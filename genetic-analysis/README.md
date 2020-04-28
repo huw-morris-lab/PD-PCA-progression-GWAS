@@ -24,3 +24,8 @@ This annotates GWAS results with rsIDs and creates the files to upload to FUMA.
 5. cojo_script.txt
 
 This runs COJO to generate the final list of independent SNPs, and merges with the nearest gene data to create final table.
+
+
+6. PCs_vs_progression_script.txt
+
+Sensibility check to make sure the clinical progression scores are not associated with any of the genetic principal components PC1-5.
