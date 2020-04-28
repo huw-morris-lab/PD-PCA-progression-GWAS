@@ -1,0 +1,78 @@
+### CONDITIONAL ANALYSIS TO IDENTIFY INDEPENDENT SIGNALS ###
+
+#http://cnsgenomics.com/software/gcta/#COJO
+
+#First combine all the separate chromosome results into a single file
+#cat *.SingleWald.assoc | grep -v 'N_INFORMATIVE' > allChrs_FILE.assoc
+
+#Create COJO file
+R
+library(data.table)
+library(dplyr)
+
+# note1 you can speed this up with the data.table package and changing read.table and write.table to fread and fwrite
+# note2 we set here beta filtering at <5 and >-5 since typically these are unrealistic beta's coming from GWAS
+
+#Do not have info file (as I converted to hard call genotypes and merged in PLINK)
+#Read in freq.frq file from plink instead
+infos <- fread("/data/kronos/mtan/PROBAND_Oxford_PPMI_final/PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.freq.frq")
+
+#Read in GWAS results merged file 
+assoc <- fread(paste("allChrs_FILE.assoc"))
+colnames(assoc) <- c("CHROM","POS","REF","ALT","N_INFORMATIVE","Test","Beta","SE","Pvalue")
+#The TEST in the assoc file is based on chr:pos (GRCh38) so this is correct
+	
+#Merge frequency and test results
+data <- merge(infos, assoc, by.x = "SNP", by.y = "Test", all.y = T)
+dat <- subset(data, Beta < 5 & Beta > -5 & !is.na(data$Pvalue))
+	
+#The ALT allele from rvtests is always the minor allele (A1 in plink freq file)
+cojo <- dat %>%
+	select(SNP, A1, A2, MAF, Beta, SE, Pvalue, N_INFORMATIVE)
+
+#Write table	
+fwrite(cojo, "cojo_cogprogression.ma", col.names=T, row.names=F, quote = F, sep=" ")
+
+q()
+n
+
+#Run COJO
+nohup /data/kronos/mtan/software/gcta_1.92.3beta2/gcta64 \
+	--bfile /data/kronos/mtan/PROBAND_Oxford_PPMI_final/PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names \
+	--maf 0.01 \
+	--cojo-file cojo_motorprogression.ma \
+	--cojo-slct \
+	--cojo-actual-geno \
+	--cojo-p 5e-5 \
+	--out cojo_motorprogression.results > nohup_cojo.out&
+
+	
+
+#Merge COJO results with rsIDs to create final summary stats table
+R
+library(dplyr)
+library(data.table)
+
+#Read COJO results (change file name as needed)
+cojo <- read.table("cojo_motorprogression.results.jma.cojo", header = TRUE)
+
+#Read rsIDs file
+rsids <- fread("PCA_GWAS_sumstats_with_rsID_new.txt", header=TRUE)
+
+#Read nearest gene annotations
+genes <- fread("res.annotated.txt")
+
+#Merge - using COJO results as the main table
+merged <- cojo %>%
+	left_join(rsids, by = c("SNP" = "chr_bp")) %>%
+	left_join(genes, by = c("SNP" = "Test"))
+	
+#Select columns for final results table and sort by p value
+final <- merged %>%
+	select(Chr, bp, rsid, refA, REF.y, freq, gene.name, 'Distance.To.Gene(BP)', b, se, p, pJ) %>%
+	arrange(p) %>%
+	rename(effect_minor_allele = "refA",
+			reference_allele = "REF.y")
+
+#Write table
+write.table(final, "final_results.txt", quote=F, col.names=T, row.names=F)

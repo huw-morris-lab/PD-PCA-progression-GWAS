@@ -1,0 +1,100 @@
+######ASSOCIATION BETWEEN GENETIC PRINCIPAL COMPONENTS AND PROGRESSION SCORES######
+#Created by: Manuela Tan
+#Created: 05/03/2020
+#Last updated: 28/04/2020
+#WD: /data/kronos/mtan/PROBAND_Oxford_PPMI_final/PCA_GWAS_rvtests_PPMIbaseline_OFF_annualvisits_normSemFlu/
+
+#Aim is to check whether there is an association between the genetic principal components and each of the progression scores
+
+R
+library(data.table)
+library(dplyr)
+
+
+###COMPOSITE PROGRESSION###
+
+#Read in progression data - this has already been merged with the genetic principal components
+composite <- fread("pheno_for_rvtests.pheno.txt")
+
+#Linear regression of composite progression against all PCs
+composite_assoc <- glm(pheno ~ PC1 + PC2 + PC3 + PC4 + PC5 , data = composite)
+summary(composite_assoc)
+
+#Linear regression of composite progression against all PCs, including cohort covariates
+composite_assoc_cohort <- glm(pheno ~ PC1 + PC2 + PC3 + PC4 + PC5 + cohort_PROBAND + cohort_Oxford + cohort_PPMI, data = composite)
+summary(composite_assoc_cohort)
+
+#Linear regression of composite progression against each PC at a time, not adjusting for cohort
+composite_assoc_PC1 <- glm(pheno ~ PC1, data = composite)
+summary(composite_assoc_PC1)
+
+composite_assoc_PC2 <- glm(pheno ~ PC2, data = composite)
+summary(composite_assoc_PC2)
+
+composite_assoc_PC3 <- glm(pheno ~ PC3, data = composite)
+summary(composite_assoc_PC3)
+
+composite_assoc_PC4 <- glm(pheno ~ PC4, data = composite)
+summary(composite_assoc_PC4)
+
+composite_assoc_PC5 <- glm(pheno ~ PC5, data = composite)
+summary(composite_assoc_PC5)
+
+###MOTOR PROGRESSION###
+
+motor <- fread("./motor_progression/pheno_for_rvtests.pheno.txt")
+
+#Linear regression of composite progression against all PCs
+motor_assoc <- glm(pheno ~ PC1 + PC2 + PC3 + PC4 + PC5 , data = motor)
+summary(motor_assoc)
+
+#Linear regression of composite progression against all PCs, including cohort covariates
+motor_assoc_cohort <- glm(pheno ~ PC1 + PC2 + PC3 + PC4 + PC5 + cohort_PROBAND + cohort_Oxford + cohort_PPMI, data = motor)
+summary(motor_assoc_cohort)
+
+#Linear regression of composite progression against each PC at a time, not adjusting for cohort
+motor_assoc_PC1 <- glm(pheno ~ PC1, data = motor)
+summary(motor_assoc_PC1)
+
+motor_assoc_PC2 <- glm(pheno ~ PC2, data = motor)
+summary(motor_assoc_PC2)
+
+motor_assoc_PC3 <- glm(pheno ~ PC3, data = motor)
+summary(motor_assoc_PC3)
+
+motor_assoc_PC4 <- glm(pheno ~ PC4, data = motor)
+summary(motor_assoc_PC4)
+
+motor_assoc_PC5 <- glm(pheno ~ PC5, data = motor)
+summary(motor_assoc_PC5)
+
+
+###COGNITIVE PROGRESSION###
+
+
+cognitive <- fread("./cog_progression/pheno_for_rvtests.pheno.txt")
+
+#Linear regression of composite progression against all PCs
+cognitive_assoc <- glm(pheno ~ PC1 + PC2 + PC3 + PC4 + PC5 , data = cognitive)
+summary(cognitive_assoc)
+
+
+#Linear regression of cognitive progression against all PCs, including cohort covariates
+cognitive_assoc_cohort <- glm(pheno ~ PC1 + PC2 + PC3 + PC4 + PC5 + cohort_PROBAND + cohort_Oxford + cohort_PPMI, data = cognitive)
+summary(cognitive_assoc_cohort)
+
+#Linear regression of cognitive progression against each PC at a time, not adjusting for cohort
+cognitive_assoc_PC1 <- glm(pheno ~ PC1, data = cognitive)
+summary(cognitive_assoc_PC1)
+
+cognitive_assoc_PC2 <- glm(pheno ~ PC2, data = cognitive)
+summary(cognitive_assoc_PC2)
+
+cognitive_assoc_PC3 <- glm(pheno ~ PC3, data = cognitive)
+summary(cognitive_assoc_PC3)
+
+cognitive_assoc_PC4 <- glm(pheno ~ PC4, data = cognitive)
+summary(cognitive_assoc_PC4)
+
+cognitive_assoc_PC5 <- glm(pheno ~ PC5, data = cognitive)
+summary(cognitive_assoc_PC5)

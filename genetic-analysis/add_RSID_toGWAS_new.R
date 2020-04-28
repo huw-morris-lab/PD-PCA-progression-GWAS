@@ -30,6 +30,9 @@ cd /data/kronos/mtan/PROBAND_Oxford_PPMI_final/PCA_GWAS_rvtests_PPMIbaseline_OFF
 # Run the following step as a qsub script because it takes ages
 #qsub -pe make 2 -cwd rsids_script.R
 
+# Create merged GWAS results file combining all the chromosomes
+#cat *.SingleWald.assoc | grep -v 'N_INFORMATIVE' > allChrs_FILE.assoc
+
 # merge in R with GWAS results
 #R
 #!/usr/bin/Rscript
