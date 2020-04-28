@@ -1,0 +1,147 @@
+### CREATE PHENOTYPE FILE FOR RVTESTS GWAS###
+#Created by Manuela Tan
+#Based on https://github.com/neurogenetics/GWAS-pipeline
+#Created: 30/07/2019
+#Updated: 11/04/2020
+#After removing PCA outliers (2 passes)
+#Clinical data - scales have been standardised within each cohort
+
+
+R
+library(dplyr)
+
+#Read in phenotype file (export from R clinical data)
+phenotype <- read.table("PROBAND_OXFORD_PPMI_progression_perc_scaled_annualvisits_OFF_forGWAS_normfluency.txt")
+
+#Read in list of Oxford individuals to EXCLUDE (have withdrawn)
+Oxford_exclude <- read.table("Oxford_exclude.txt")
+
+#Create final IID of Oxford individuals to exclude
+Oxford_exclude <- Oxford_exclude %>%
+	mutate(IID = paste(V1,"_",V1,sep=""))
+
+phenotype <- phenotype %>% 
+	anti_join(Oxford_exclude, by = c("V2" = "IID"))
+
+#Read in Principal Components for covariates
+pcs <- read.table("/data/kronos/mtan/PROBAND_Oxford_PPMI_final/PCA_removedOutliers.eigenvec")
+
+pcs <- pcs %>%
+	select(V1:V7) %>%
+	rename(PC1 = "V3",
+			PC2 = "V4",
+			PC3 = "V5",
+			PC4 = "V6",
+			PC5 = "V7")
+
+ 
+#Merge 
+phenotype_combined <- phenotype %>% 
+	inner_join(pcs, by = c("V2"))
+
+#Select relevant variables and composite progression score as phenotype
+composite_progression <- phenotype_combined %>%
+	select(-V1.y) %>%
+	rename(FID = "V1.x",
+			IID = "V2",
+			sex = "V3",
+			cohort_PROBAND = "V4",
+			cohort_Oxford = "V5",
+			cohort_PPMI = "V6",
+			array1 = "V7",
+			array2 = "V8",
+			array3 = "V9",
+			array4 = "V10",
+			array5 = "V11",
+			array6 = "V12",
+			pheno = "V13") %>%
+	mutate(patid = 0,
+			matid = 0)
+			
+composite_progression <- composite_progression %>%
+	select(FID, IID, patid, matid, sex, cohort_PROBAND, cohort_Oxford, cohort_PPMI, array1, array2, array3, array4, array5, array6, pheno, PC1:PC5)
+
+
+#Export phenotype file
+write.table(composite_progression, "pheno_for_rvtests.pheno.txt", col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+#Export people to keep file
+people_keep <- composite_progression %>%
+	select(IID)
+
+#Export people to keep file
+write.table(people_keep, "people_for_rvtests.txt", col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+
+##Select motor progression score##
+
+motor_progression <- phenotype_combined %>%
+	select(-V1.y) %>%
+	rename(FID = "V1.x",
+			IID = "V2",
+			sex = "V3",
+			cohort_PROBAND = "V4",
+			cohort_Oxford = "V5",
+			cohort_PPMI = "V6",
+			array1 = "V7",
+			array2 = "V8",
+			array3 = "V9",
+			array4 = "V10",
+			array5 = "V11",
+			array6 = "V12",
+			pheno = "V14") %>%
+	mutate(patid = 0,
+			matid = 0)
+
+motor_progression <- motor_progression %>%
+	select(FID, IID, patid, matid, sex, cohort_PROBAND, cohort_Oxford, cohort_PPMI, array1, array2, array3, array4, array5, array6, pheno, PC1:PC5)
+
+
+#Export phenotype file
+write.table(motor_progression, "./motor_progression/pheno_for_rvtests.pheno.txt", col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+#Export people to keep file
+people_keep <- motor_progression %>%
+	select(IID)
+
+#Export people to keep file
+write.table(people_keep, "./motor_progression/people_for_rvtests.txt", col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+
+
+##Select cognitive progression score##
+
+cog_progression <- phenotype_combined %>%
+	select(-V1.y) %>%
+	rename(FID = "V1.x",
+			IID = "V2",
+			sex = "V3",
+			cohort_PROBAND = "V4",
+			cohort_Oxford = "V5",
+			cohort_PPMI = "V6",
+			array1 = "V7",
+			array2 = "V8",
+			array3 = "V9",
+			array4 = "V10",
+			array5 = "V11",
+			array6 = "V12",
+			pheno = "V15") %>%
+	mutate(patid = 0,
+			matid = 0)
+
+cog_progression <- cog_progression %>%
+	select(FID, IID, patid, matid, sex, cohort_PROBAND, cohort_Oxford, cohort_PPMI, array1, array2, array3, array4, array5, array6, pheno, PC1:PC5)
+
+#Export phenotype file
+write.table(cog_progression, "./cog_progression/pheno_for_rvtests.pheno.txt", col.names = TRUE, row.names = FALSE, quote = FALSE)
+
+#Export people to keep file
+people_keep <- cog_progression %>%
+	select(IID)
+
+#Export people to keep file
+write.table(people_keep, "./cog_progression/people_for_rvtests.txt", col.names = FALSE, row.names = FALSE, quote = FALSE)
+						
+			
+q()
+n
