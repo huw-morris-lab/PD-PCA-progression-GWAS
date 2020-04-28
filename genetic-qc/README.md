@@ -1,1 +1,1 @@
-Scripts for QC of genetic data.
+Scripts for merging and QC of genetic data.
