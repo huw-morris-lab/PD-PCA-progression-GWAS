@@ -1,0 +1,805 @@
+### Merge PROBAND+Oxford and PPMI ###
+
+# Created 10/10/2019
+# Updated 30/03/2020
+# Created by: Manuela Tan
+# WD: /data/kronos/mtan/PROBAND_Oxford_PPMI_final
+# Changes: exclude outliers >2SD from mean in genetic PC1 and PC2
+
+# Final PROBAND+Oxford files: PROBAND_Oxford_merged.liftover_hg38
+# Final PPMI files: PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.PCA_keep
+
+###### Get list of common SNPs between PROBAND+Oxford and PPMI #####
+
+##First get list of common SNPs
+
+#Read bim files into R
+R
+library(dplyr)
+library(data.table)
+
+PROBAND_Oxford <- fread("PROBAND_Oxford_merged.liftover_hg38.bim")
+PPMI <- fread("PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.PCA_keep.bim")
+
+#Create new column for CHR:POS:A1:A2
+PROBAND_Oxford <- PROBAND_Oxford %>%
+	mutate(SNP_ID = paste(V1, V4, V5, V6, sep = ":"))
+
+PPMI <- PPMI %>%
+	mutate(SNP_ID = paste(V1, V4, V5, V6, sep = ":"))
+	
+	
+#Check for duplicates within dataset and remove any duplicates
+PROBAND_Oxford$SNP_ID[duplicated(PROBAND_Oxford$SNP_ID)]
+PROBAND_Oxford <- distinct(PROBAND_Oxford, SNP_ID, .keep_all= TRUE)
+
+PPMI$SNP_ID[duplicated(PPMI$SNP_ID)]
+
+
+#Select only common SNPs
+merged <- PROBAND_Oxford %>%
+	inner_join(PPMI, by = "SNP_ID")
+
+#Check the number of SNPs that are common to both datasets
+dim(merged)
+#5919374 variants in common
+
+#Export SNP names
+PROBAND_Oxford_snps_export <- merged %>% select(V2.x)
+write.table(PROBAND_Oxford_snps_export, "PROBAND_Oxford_snps_export.txt",
+	col.names = FALSE, row.names = FALSE, quote = FALSE)
+
+PPMI_snps_export <- merged %>% select(V2.y)
+write.table(PPMI_snps_export, "PPMI_snps_export.txt",
+	col.names = FALSE, row.names = FALSE, quote = FALSE)
+	
+q()
+n
+
+
+###### Merge PROBAND+Oxford and PPMI using common SNPs only #####
+#From PROBAND+Oxford
+plink --bfile PROBAND_Oxford_merged.liftover_hg38 \
+	--extract PROBAND_Oxford_snps_export.txt \
+	--make-bed \
+	--out PROBAND_Oxford_merged.liftover_hg38.common_snps
+#5919374 SNPs
+
+#From PPMI
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.PCA_keep \
+	--extract PPMI_snps_export.txt \
+	--make-bed \
+	--out  PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.PCA_keep.common_snps
+#5919374 SNPs
+
+#Generate frequency stats in PPMI and PROBAND+Oxford separately
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.PCA_keep.common_snps \
+	--freq \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.PCA_keep.common_snps.freq
+	
+plink --bfile PROBAND_Oxford_merged.liftover_hg38.common_snps \
+	--freq \
+	--out PROBAND_Oxford_merged.liftover_hg38.common_snps.freq
+
+#Merge in plink
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.PCA_keep.common_snps \
+	--bmerge PROBAND_Oxford_merged.liftover_hg38.common_snps.bed \
+	PROBAND_Oxford_merged.liftover_hg38.common_snps.bim \
+	PROBAND_Oxford_merged.liftover_hg38.common_snps.fam \
+	--merge-equal-pos \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged
+#3643 people
+#5919374 variants
+#0.999994 total genotyping rate
+
+
+#Check SNP QC
+
+plink --bfile PROBAND_Oxford_PPMI_merged \
+	--maf 0.01 \
+	--geno 0.01 \
+	--hwe 1e-5 \
+	--autosome \
+	--exclude /data/kronos/mtan/exclusion_regions_hg38.txt \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc
+#1 variant removed due to missingness
+#499 variants removed due to HWE
+#6 variants removed due to MAF threshold
+#5918868 variants remaining
+
+###### PCA first pass - our samples only #####
+
+#Generate pruned SNP list
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc \
+	--indep-pairwise 1000 10 0.02 \
+	--autosome \
+	--out pruned_data
+
+#Extract pruned SNPs
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc \
+	--extract pruned_data.prune.in \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.pruned
+#16425 variants
+
+#Run PCA
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.pruned \
+	--pca \
+	--out PCA
+
+###### PCA first pass - remove outliers #####
+
+#Plot PCA
+#Read in eigenvectors
+R
+library(dplyr)
+library(ggplot2)
+
+PCA.eigenvec <- as_tibble(read.table("PCA.eigenvec", sep = ""))
+
+PCA.eigenvec <- PCA.eigenvec %>% 
+  dplyr::rename(FID = V1,
+                IID = V2,
+                PC1 = V3,
+                PC2 = V4,
+                PC3 = V5,
+                PC4 = V6,
+                PC5 = V7,
+                PC6 = V8,
+                PC7 = V9,
+                PC8 = V10,
+                PC9 = V11,
+                PC10 = V12,
+				PC11 = V13,
+				PC12 = V14,
+				PC13 = V15,
+				PC14 = V16,
+				PC15 = V17,
+				PC16 = V18,
+				PC17 = V19,
+				PC18 = V20,
+				PC19 = V21,
+				PC20 = V22)
+
+
+#Read in cohorts
+cohorts <- read.table("IDs_cohorts.txt")
+
+cohorts <- cohorts %>%
+	rename(cohort = V3)
+
+#Merge data
+merged <- PCA.eigenvec %>%
+	inner_join(cohorts, by = c("IID" = "V2"))
+
+#Get list of individuals who are not in the clinical dataset
+missing <- PCA.eigenvec %>%
+	anti_join(cohorts, by = c("IID" = "V2"))
+
+#Plot first 2 PCs
+ggplot(data = merged, aes(x = PC1, y = PC2, color = cohort)) +
+  geom_point(size = 0.9, alpha = 0.7) +
+  theme_bw() +
+  ggsave("PCA_PROBAND_Oxford_PPMI.png")
+#Check PCA plot to make sure the cohorts overlap in the PCs
+
+#Plot PC3 and PC4
+ggplot(data = merged, aes(x = PC3, y = PC4, color = cohort)) +
+  geom_point(size = 0.9, alpha = 0.7) +
+  theme_bw() +
+  ggsave("PCA_PROBAND_Oxford_PPMI_PC3to4.png")
+
+
+#Look at the mean for each PC
+merged_means <- merged %>% 
+  dplyr::mutate(mean_PC1 = mean(PC1),
+                mean_PC2 = mean(PC2),
+                mean_PC3 = mean(PC3),
+                mean_PC4 = mean(PC4),
+                mean_PC5 = mean(PC5),
+                mean_PC6 = mean(PC6),
+                mean_PC7 = mean(PC7),
+                mean_PC8 = mean(PC8),
+                mean_PC9 = mean(PC9),
+                mean_PC10 = mean(PC10))
+
+
+#Remove individuals who are outliers on PC1 to PC5
+
+PC.outlierResults <- as.data.frame(matrix(ncol = 6, nrow = nrow(merged)))
+PC.outlierResults[, 1] <- merged$IID
+
+#For loop to calculate the SDs of each Principal Component (first 5 PCs only)
+#This outputs into a results table
+for (i in 3:7) {
+  mean <- mean(merged_means[[i]])
+  sd <- sd(merged_means[[i]])
+  
+  PC.outlierResults[, i-1] <- merged_means %>% 
+    mutate(outlier = ifelse(merged_means[[i]] > mean + 6*sd, "outlier",
+                            ifelse(merged_means[[i]] < mean - 6*sd, "outlier", "keep"))) %>% 
+    dplyr::select(outlier)
+}
+
+#Rename column names
+PC.outlierResults <- PC.outlierResults %>% 
+  dplyr::rename(ID = V1,
+                PC1_result = V2,
+                PC2_result = V3,
+                PC3_result = V4,
+                PC4_result = V5,
+                PC5_result = V6)
+
+#Now merge the outlier results with the main dataset
+merged_means_outlierResults <- merged_means %>% 
+  left_join(PC.outlierResults, by = c("IID" = "ID"))
+
+#If any of the PC results are outliers, flag as outlier
+merged_means_outlierResults <- merged_means_outlierResults %>% 
+  mutate(PCA_outlier = ifelse(PC1_result == "outlier" |
+                                PC2_result == "outlier" |
+                                PC3_result == "outlier" |
+                                PC4_result == "outlier" |
+                                PC5_result == "outlier",
+                                "outlier final", "keep final"))
+
+#Count how many outliers to remove
+merged_means_outlierResults %>%
+	group_by(PCA_outlier) %>%
+	summarise(count = n())
+
+#Write list of outliers to remove
+outliers_remove <- merged_means_outlierResults %>%
+	filter(PCA_outlier == "outlier final") %>%
+	select(FID, IID)
+
+#Write list of outliers to remove from genetic data
+write.table(outliers_remove, "PCA_outliers_toremove.txt", sep = "\t", row.names = F, quote = F)
+
+#Write list of individuals who are not in the clinical dataset
+missing_export <- missing %>%
+	select(FID, IID)
+
+combined <- rbind(missing_export, outliers_remove)
+
+write.table(combined, "all_toremove.txt", sep = "\t", row.names = F, quote = F)
+
+q()
+n
+
+
+#Remove PCA outliers from main genetic data
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc \
+	--remove all_toremove.txt \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers
+#Removed 22 individuals who are PCA outliers
+#Removed 600+ individuals who are not in clinical dataset
+#3000 individuals remaining
+
+
+##### Run PCA again after removing outliers first pass #####
+
+#Regenerate PCs
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers \
+	--indep-pairwise 1000 10 0.02 \
+	--autosome \
+	--out pruned_data
+
+#Extract pruned SNPs
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers \
+	--extract pruned_data.prune.in \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.pruned
+#16341 variants
+
+#Run PCA
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.pruned \
+	--pca \
+	--out PCA_removedOutliers
+
+##### Plot PCA after removing outliers #####
+
+#Read in eigenvectors
+R
+library(dplyr)
+library(ggplot2)
+
+PCA.eigenvec <- as_tibble(read.table("PCA_removedOutliers.eigenvec", sep = ""))
+
+PCA.eigenvec <- PCA.eigenvec %>% 
+  dplyr::rename(FID = V1,
+                IID = V2,
+                PC1 = V3,
+                PC2 = V4,
+                PC3 = V5,
+                PC4 = V6,
+                PC5 = V7,
+                PC6 = V8,
+                PC7 = V9,
+                PC8 = V10,
+                PC9 = V11,
+                PC10 = V12,
+				PC11 = V13,
+				PC12 = V14,
+				PC13 = V15,
+				PC14 = V16,
+				PC15 = V17,
+				PC16 = V18,
+				PC17 = V19,
+				PC18 = V20,
+				PC19 = V21,
+				PC20 = V22)
+
+
+#Read in cohorts
+cohorts <- read.table("IDs_cohorts.txt")
+
+cohorts <- cohorts %>%
+	rename(cohort = V3)
+
+#Merge data
+merged <- PCA.eigenvec %>%
+	inner_join(cohorts, by = c("IID" = "V2"))
+
+#Plot first 2 PCs
+ggplot(data = merged, aes(x = PC1, y = PC2, color = cohort)) +
+  geom_point(size = 0.9, alpha = 0.7) +
+  theme_bw() +
+  ggsave("PCA_PROBAND_Oxford_PPMI.removedOutliers.png")
+#Check PCA plot to make sure the cohorts overlap in the PCs and there are no extreme outliers
+
+#Plot PC3 and PC4
+ggplot(data = merged, aes(x = PC3, y = PC4, color = cohort)) +
+  geom_point(size = 0.9, alpha = 0.7) +
+  theme_bw() +
+  ggsave("PCA_PROBAND_Oxford_PPMI_PC3to4.removedOutliers.png")
+
+
+#See how many individuals are outliers for PC1 and PC2 >6SD away from mean
+
+#Look at the mean for each PC
+merged_means <- merged %>% 
+  dplyr::mutate(mean_PC1 = mean(PC1),
+                mean_PC2 = mean(PC2),
+                mean_PC3 = mean(PC3),
+                mean_PC4 = mean(PC4),
+                mean_PC5 = mean(PC5),
+                mean_PC6 = mean(PC6),
+                mean_PC7 = mean(PC7),
+                mean_PC8 = mean(PC8),
+                mean_PC9 = mean(PC9),
+                mean_PC10 = mean(PC10))
+
+#Remove individuals who are outliers on PC1 to PC5
+
+PC.outlierResults <- as.data.frame(matrix(ncol = 6, nrow = nrow(merged)))
+PC.outlierResults[, 1] <- merged$IID
+
+
+#For loop to calculate the SDs of each Principal Component (first 5 PCs only)
+#This outputs into a results table
+for (i in 3:7) {
+  mean <- mean(merged_means[[i]])
+  sd <- sd(merged_means[[i]])
+  
+  PC.outlierResults[, i-1] <- merged_means %>% 
+    mutate(outlier = ifelse(merged_means[[i]] > mean + 6*sd, "outlier",
+                            ifelse(merged_means[[i]] < mean - 6*sd, "outlier", "keep"))) %>% 
+    dplyr::select(outlier)
+}
+
+#Rename column names
+PC.outlierResults <- PC.outlierResults %>% 
+  dplyr::rename(ID = V1,
+                PC1_result = V2,
+                PC2_result = V3,
+                PC3_result = V4,
+                PC4_result = V5,
+                PC5_result = V6)
+
+#Now merge the outlier results with the main dataset
+merged_means_outlierResults <- merged_means %>% 
+  left_join(PC.outlierResults, by = c("IID" = "ID"))
+
+#If any of the PC results are outliers, flag as outlier
+merged_means_outlierResults <- merged_means_outlierResults %>% 
+  mutate(PCA_outlier = ifelse(PC1_result == "outlier" |
+                                PC2_result == "outlier" |
+                                PC3_result == "outlier" |
+                                PC4_result == "outlier" |
+                                PC5_result == "outlier",
+                                "outlier final", "keep final"))
+
+#Plot first 2 PCs by outlier status
+ggplot(data = merged_means_outlierResults, mapping = aes(x = PC1, y = PC2, color = PCA_outlier)) +
+geom_point(size = 0.9, alpha = 0.7) +
+  theme_bw() +
+  ggsave("PCA_PROBAND_Oxford_PPMI.removedOutliers.redoOutliers.png")
+
+#Plot 3rd and 4th PCs by outlier status
+ggplot(data = merged_means_outlierResults, mapping = aes(x = PC3, y = PC4, color = PCA_outlier)) +
+geom_point(size = 0.9, alpha = 0.7) +
+  theme_bw() +
+  ggsave("PCA_PROBAND_Oxford_PPMI_PC3to4.removedOutliers.redoOutliers.png")
+
+#Count how many individuals would be removed if >6SD away from mean of PC1 to PC5
+merged_means_outlierResults %>%
+	group_by(PCA_outlier) %>%
+	summarise(count = n())
+
+#Remove outliers - final pass
+merged_means_outlierResults_finalKeep <- merged_means_outlierResults %>%
+	filter(PCA_outlier == "keep final")
+
+#Plot first 2 PCs by cohort - final individuals who are included in analysis
+ggplot(data = merged_means_outlierResults_finalKeep, aes(x = PC1, y = PC2, color = cohort)) +
+  geom_point(size = 0.9, alpha = 0.7) +
+  theme_bw() +
+  ggsave("PCA_PROBAND_Oxford_PPMI.removedOutliers.redoOutliers.FINAL.png")
+
+#Write of list of additional individuals to remove
+export_individualsRemove <- merged_means_outlierResults %>%
+	filter(PCA_outlier == "outlier final") %>%
+	select(IID, FID)
+
+#Write list of outliers to remove from genetic data
+write.table(export_individualsRemove, "extra_PCA_outliers_toremove.txt", sep = "\t", row.names = F, quote = F)
+
+q()
+n
+
+
+
+##### Remove PCA outliers - final pass #####
+
+#Remove PCA outliers from main genetic data
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers \
+	--remove extra_PCA_outliers_toremove.txt \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers
+#Removed 42 individuals
+#2958 individuals remaining
+
+
+#####Final tidying of the plink binary files#####
+
+#Rename SNP names in combined binary files to chr:pos
+#This is because the current SNP names are chr:pos but in GRCh37 and this creates problems for COJO analysis
+
+R
+library(dplyr)
+library(data.table)
+
+#Read in bim file to create new positions for update-map
+bim <- fread("PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.bim")
+
+#Create new SNP name with correct positions
+bim <- bim %>%
+	mutate(new_id = paste(V1,":",V4, sep=""))
+	
+new_map <- bim %>%
+	select(V2, new_id)
+
+fwrite(new_map, "new_snp_names.txt", quote=FALSE, col.names = FALSE, row.names=FALSE, sep=" ")
+
+q()
+n
+
+#Update SNP names in PLINK
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers \
+	--update-map new_snp_names.txt \
+	--update-name \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names
+
+#Generate frequency statistics from final plink files
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names \
+	--freq \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.freq
+
+
+
+#####Annotate PROBAND+Oxford+PPMI data with rsIDs#####
+
+#HapMap SNPs are just rsIDs
+#Create a map file to change the chr:bp in the PROBAND+Oxford+PPMI data to rsIDs to merge with HapMap SNPs
+
+R
+library(data.table)
+library(dplyr)
+
+#Read in GRCh38 rsID data
+rsids_positions <- fread("/data/kronos/mtan/GRCh38_rsids_new_build151_final_sepalleles_final.txt", header = F, fill = TRUE)
+
+rsids_positions <- rsids_positions %>%
+	rename(chrpos = V1,
+			rsid = V2,
+			REF = V3,
+			ALT = V4)
+	
+#Read in bim file
+bim <- fread("/data/kronos/mtan/PROBAND_Oxford_PPMI/PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.bim")
+
+bim <- bim %>%
+	rename(chr = V1,
+			chrpos = V2,
+			bp = V4,
+			A1 = V5,
+			A2 = V6)
+
+#Merge by position
+merged <- bim %>%
+	inner_join(rsids_positions, by = "chrpos")
+
+
+#Check allele match
+merged <- merged %>%
+	mutate(allele_match = ifelse(A1 == ALT & A2 == REF, "match",
+								ifelse(A1 == REF & A2 == ALT, "match2", "mismatch")))
+
+
+#Check duplicates
+#merged$chrpos[duplicated(merged$chrpos)]
+
+#Remove mismatches
+merged_alleleMatch <- merged %>%
+	filter(allele_match == "match" | allele_match == "match2")
+
+#Remove duplicates
+merged_alleleMatch_unique <- merged_alleleMatch %>%
+	distinct(chrpos, .keep_all = TRUE)
+
+#Export file with chr:bp and rsID
+export_map <- merged_alleleMatch_unique %>%
+	select(chrpos, rsid) 
+
+fwrite(export_map, "map_bim_rsids.txt", quote=FALSE, col.names = FALSE, row.names=FALSE, sep=" ")
+
+q()
+n
+
+#Update SNP names in plink
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names \
+	--update-map map_bim_rsids.txt2 \
+	--update-name \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs
+#5292236 SNPs updated
+
+
+##### (OLD) Merge with HapMap data (all populations) to do PCA#####
+
+#Create pruned list of SNPs using rsID names
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs \
+	--indep-pairwise 1000 10 0.02 \
+	--autosome \
+	--out pruned_data.rsIDs
+
+#Extract HapMap SNPs from full dataset
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs \
+	--extract /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.no-at-cg-snps.txt \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap
+#726810 variants
+#Genotyping rate 0.999998 
+
+#Merge PROBAND data with HapMap data (all populations) and extract pruned SNPs
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.fam \
+	--extract pruned_data.rsIDs.prune.in \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.hapmap.merged-pruned
+#379 variants with 3+ alleles
+
+#Flip missnps
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap \
+	--flip PROBAND_Oxford_PPMI_merged.hapmap.merged-pruned-merge.missnp \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps
+
+#Attempt remerge and extract pruned SNPs
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.fam \
+	--extract pruned_data.rsIDs.prune.in \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.hapmap.merged-pruned
+
+#Exclude 8 variants with 3+ alleles present
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps \
+	--exclude PROBAND_Oxford_PPMI_merged.hapmap.merged-pruned-merge.missnp \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps.exclude_missnps
+
+plink --bfile /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps \
+	--exclude PROBAND_Oxford_PPMI_merged.hapmap.merged-pruned-merge.missnp \
+	--make-bed \
+	--out /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.exclude_missnps
+
+#Final merge
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps.exclude_missnps \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.exclude_missnps.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.exclude_missnps.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.exclude_missnps.fam \
+	--extract pruned_data.rsIDs.prune.in \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.hapmap.merged-pruned
+#Total genotyping rate 0.999691
+#3548 variants remaining
+
+
+##### ATTEMPT 2: Merge with HapMap data, merge first then prune ######
+#This is because pruning first then merging was losing a lot of SNPs - only 3.5k SNPs for PCA
+#Want over 10k SNPs for PCA
+
+#Extract HapMap SNPs from full dataset
+# PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap
+#726810 variants
+#Genotyping rate 0.999998 
+
+#Write a list of the HapMap SNPs that are present in our data
+#This is because when I merge the full datasets, the genotyping rate is low
+#Think this might be because HapMap SNPs that are not in our data are included but coded as missing
+awk '{print $2}' PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.bim > common_snps_hapmap.txt
+
+#Extract only SNPs that are present in PROBAND+Oxford+PPMI from the HapMap data
+plink --bfile /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps \
+	--extract common_snps_hapmap.txt \
+	--make-bed \
+	--out /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps
+#726810 SNPs
+
+#Merge PROBAND data with HapMap data (all populations) - only SNPs that are present in both datasets
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.fam \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.hapmap.attempt2_merged
+#379 variants with 3+ alleles
+
+#Flip missnps
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap \
+	--flip PROBAND_Oxford_PPMI_merged.hapmap.attempt2_merged-merge.missnp \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps_attempt2
+
+#Attempt remerge and extract pruned SNPs
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps_attempt2 \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.fam \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.hapmap.attempt2_merged
+
+#Exclude 8 variants with 3+ alleles present
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps_attempt2 \
+	--exclude PROBAND_Oxford_PPMI_merged.hapmap.merged-pruned-merge.missnp \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps_attempt2.exclude_missnps
+#726802 variants remaining
+
+plink --bfile /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps \
+	--exclude PROBAND_Oxford_PPMI_merged.hapmap.merged-pruned-merge.missnp \
+	--make-bed \
+	--out /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.exclude_missnps
+
+#Final merge - without extracting pruned SNPs
+plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names.rsIDs.hapmap.flipped_missnps_attempt2.exclude_missnps \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.exclude_missnps.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.exclude_missnps.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.common_snps.exclude_missnps.fam \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.hapmap.attempt2_merged
+#Total genotyping rate 0.999677.
+#726802 variants remaining
+
+#Create pruned list of SNPs using rsID names
+plink --bfile PROBAND_Oxford_PPMI_merged.hapmap.attempt2_merged \
+	--indep-pairwise 1000 10 0.02 \
+	--autosome \
+	--out pruned_data.rsIDs.merged_hapmap
+
+#Extract pruned SNPs
+plink --bfile PROBAND_Oxford_PPMI_merged.hapmap.attempt2_merged \
+	--extract pruned_data.rsIDs.merged_hapmap.prune.in \
+	--make-bed \
+	--out PROBAND_Oxford_PPMI_merged.hapmap.attempt2_merged.pruned
+#15308 variants
+#3353 people
+#Total genotyping rate 0.999679
+
+##### Run PCA with HapMap samples (all populations)#####
+
+#Run PCA on merged files
+plink --bfile PROBAND_Oxford_PPMI_merged.hapmap.attempt2_merged.pruned \
+	--pca \
+	--out PCA_with_hapmap.pruned.removedOutliers
+
+#Plot principal components
+
+R
+library(tidyverse)
+library(data.table)
+
+#Read in PCA from merged PROBAND+Oxford+PPMI and HapMap samples
+pca <- fread("PCA_with_hapmap.pruned.removedOutliers.eigenvec")
+
+#Read in population data for HapMap samples
+HapMap_pops <- as_tibble(read.table("/data/kronos/mtan/reference/hapmap/relationships_w_pops_121708.txt", header = TRUE))
+
+pca <- pca %>% 
+  rename(FID = V1,
+                IID = V2,
+                PC1 = V3,
+                PC2 = V4,
+                PC3 = V5,
+                PC4 = V6,
+                PC5 = V7,
+                PC6 = V8,
+                PC7 = V9,
+                PC8 = V10,
+                PC9 = V11,
+                PC10 = V12)
+
+#Merge PCA data with HapMap population info
+pca_pops <- pca %>%
+	left_join(HapMap_pops, by = c("FID", "IID"))
+
+#Read in cohorts
+cohorts <- read.table("IDs_cohorts.txt")
+
+cohorts <- cohorts %>%
+	rename(FID = V1,
+			IID = V2,
+			cohort = V3)
+
+#If the population is missing, code as our samples
+pca_pops_cohorts <- pca_pops %>%
+	left_join(cohorts, by = c("FID", "IID"))
+	
+#Create final column for cohort and HapMap population
+pca_pops_cohorts <- pca_pops_cohorts %>%
+	mutate(cohort_pop = ifelse(is.na(cohort) & is.na(population), "check",
+								ifelse(is.na(cohort) & !is.na(population), as.character(population),
+									ifelse(!is.na(cohort) & is.na(population), "PROBAND/Oxford/PPMI", NA))))
+
+pca_pops_cohorts %>%
+	group_by(cohort_pop) %>%
+	summarise(count = n())
+
+HapMap_only <- pca_pops_cohorts %>%
+	filter(!is.na(population))
+
+#Plot first 2 PCs by group
+ggplot() +
+	geom_point(data = pca_pops_cohorts, mapping = aes(x = PC1, y = PC2, color = cohort_pop), size = 0.5, alpha = 0.1) +
+	geom_point(data=HapMap_only, aes(x = PC1, y = PC2, color = cohort_pop), size = 0.5, alpha = 0.5) +
+	theme_bw() +
+	ggsave("PCA_PROBAND_Oxford_PPMI.HapMap.png")
+
+
+
+#####Export as VCF in separate chromosomes for rvtests#####
+
+#Export as VCF so that can run in rvtests
+for i in {1..22}
+	do
+	plink --bfile PROBAND_Oxford_PPMI_merged.snpqc.removedOutliers.final_removedOutliers.correct_names \
+	--chr $i \
+	--out PROBAND_Oxford_PPMI_merged.snpqc.chr$i \
+	--recode vcf-iid
+	done
+
+
+
+
+
+	
+	
