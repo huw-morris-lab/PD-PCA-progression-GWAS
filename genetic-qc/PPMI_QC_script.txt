@@ -1,0 +1,178 @@
+### Quality control of PPMI whole genome sequencing data ###
+
+# Created 08/10/2019
+# Updated 30/03/2020
+# Created by: Manuela Tan
+# WD: /data/kronos/mtan/PROBAND_Oxford_PPMI_final
+
+##### QC on PPMI data - just on incident cohort PD cases #####
+
+#Basic SNP QC and remove exclusion regions (this was done earlier - this is the data I have)
+plink --bfile PPMI_july2018 \
+	--maf 0.01 \
+	--geno 0.01 \
+	--hwe 5e-6 \
+	--autosome \
+	--exclude exclusion_regions_hg38.txt \
+	--make-bed \
+	--out PPMI_july2018.snpqc
+#9928993 variants
+#1379 people - 688 cases and 561 controls
+
+#First filter for just the incident PD cases - the 413 individuals that we are analysing for progression
+plink --bfile PPMI_july2018.snpqc \
+	--keep PPMI_IDs_PDincident.txt \
+	--make-bed \
+	--out PPMI_july2018.snpqc.PD_cases
+#403 individuals remaining
+#9928993 variants
+
+#Reapply SNP QC filters
+plink --bfile PPMI_july2018.snpqc.PD_cases \
+	--maf 0.01 \
+	--geno 0.01 \
+	--hwe 5e-6 \
+	--autosome \
+	--make-bed \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2
+#Total genotyping rate 0.999742
+#9335244 variants remaining
+
+#Generate stats for sample genotyping rate and heterozygosity
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2 \
+	--missing \
+	--het \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2.sampleqc
+
+#In R - run sampleqc_Rscript.R
+#Creates text file with samples to remove
+
+#Remove samples who do not meet call rate (>98%) or heterozygosity (2SDs away from mean) cutoffs
+#All samples have a genotyping rate > 99%
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2 \
+	--remove samples_to_remove.txt \
+	--make-bed \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD
+#11 samples removed due to heterozygosity
+#392 samples remaining
+
+#Sex checking - cannot do because no sex chromosomes included in data
+
+#HWE generate stats
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD \
+	--hardy \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe
+
+#Filter out variants with HWE p value < 0.0001
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD \
+	--hwe 0.00001 \
+	--make-bed \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe
+#1049 variants removed
+#9334195 variants remaining
+
+#IBD
+
+#Created pruned list of SNPs
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe \
+	--indep-pairwise 50 5 0.05 \
+	--out PPMI.pruned
+
+#Run IBD on independent SNPs 
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe \
+	--extract PPMI.pruned.prune.in \
+	--genome \
+	--min 0.1 \
+	--out PPMI.IBD
+#There are 8 pairs of samples that are related
+#Crosscheck this against clinical data list - some may be in different PD cohorts
+
+#Run IBD script to crosscheck results against clinical data and progression scores
+#Removed 3 individuals who were related to lots of other people
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe \
+	--remove IBD_remove.txt \
+	--make-bed \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD
+#389 samples remaining
+
+#Check IBD again
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD \
+	--extract PPMI.pruned.prune.in \
+	--genome \
+	--min 0.1 \
+	--out PPMI.IBD_check
+#Make sure there are no more related individuals
+
+##### PCA with HapMap CEU individuals #####
+
+#PCA - using pruned SNP list. Only merging with CEU individuals
+#Issue: the HapMap SNP list on kronos is hg18 while this data is in hg38
+
+#Extract HapMap based on rsID
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD \
+	--extract /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.no-at-cg-snps.txt \
+	--make-bed \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.hapmap_snps
+#992090 variants remaining
+
+#Merge PPMI data with HapMap CEU data and extract pruned SNPs
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.hapmap_snps \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.fam \
+	--extract PPMI.pruned.prune.in \
+	--make-bed \
+	--out PPMI_for_PCA.hapmap_snps.CEU_only.merged-pruned
+
+#Flip missnps
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.hapmap_snps \
+	--flip PPMI_for_PCA.hapmap_snps.CEU_only.merged-pruned-merge.missnp \
+	--make-bed \
+	--out PPMI_for_PCA.hapmap_snps.CEU_only.flipped_missnps
+	
+#Remerge and extract pruned SNPs. Only CEU individuals from HapMap
+plink --bfile PPMI_for_PCA.hapmap_snps.CEU_only.flipped_missnps \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.fam \
+	--extract PPMI.pruned.prune.in \
+	--make-bed \
+	--out PPMI_for_PCA.hapmap_SNPs.CEU_only.flipped_missnps.merged-pruned
+#There are still 57 mis-snps with 3 or more alleles.
+#I have checked these and there is mismatch between the alleles in PPMI and those in HapMap
+#Just exclude these	
+
+#Exclude variants with mismatching alleles
+plink --bfile PPMI_for_PCA.hapmap_snps.CEU_only.flipped_missnps \
+	--exclude PPMI_for_PCA.hapmap_SNPs.CEU_only.flipped_missnps.merged-pruned-merge.missnp \
+	--make-bed \
+	--out PPMI_for_PCA.hapmap_snps.CEU_only.flipped_missnps.exclude_mismatches
+#992033 variants remaining in PPMI
+
+#Final attempt at merge
+plink --bfile PPMI_for_PCA.hapmap_snps.CEU_only.flipped_missnps.exclude_mismatches \
+	--bmerge /data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.bed \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.bim \
+	/data/kronos/mtan/reference/hapmap/hapmap3r2_CEU.CHB.JPT.YRI.founders.no-at-cg-snps.CEU_only.fam \
+	--extract PPMI.pruned.prune.in \
+	--make-bed \
+	--out PPMI_for_PCA.hapmap_SNPs.CEU_only.flipped_missnps.exclude_mismatches.merged-pruned
+#36532 variants 
+#501 people
+#0.999317 total genotyping rate	
+
+#Run PCA
+plink --bfile PPMI_for_PCA.hapmap_SNPs.CEU_only.flipped_missnps.exclude_mismatches.merged-pruned \
+	--pca \
+	--out PCA
+
+##In R - run PCA_script.R
+#Write list of PCA outliers to remove
+plink --bfile PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD \
+	--remove PCA_outliers.txt \
+	--make-bed \
+	--out PPMI_july2018.snpqc.PD_cases.snpqc2.sample_0.98.het_2SD.hwe.IBD.PCA_keep
+#382 individuals remaining
+#7 individuals removed
+#9334195 variants
+#0.999822 total genotyping rate
